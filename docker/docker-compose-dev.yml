@@ -1,0 +1,11 @@
+version: '2'
+services:
+  crawler:
+    extends:
+      file: docker-compose-base.yml
+      service: crawler
+    environment:
+      - SCALA_ENV=dev
+    build:
+      context: .
+      dockerfile: Dockerfile

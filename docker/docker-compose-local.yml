@@ -1,0 +1,19 @@
+version: '2'
+services:
+  crawler:
+    extends:
+      file: docker-compose-base.yml
+      service: crawler
+    environment:
+      - SCALA_ENV=local
+    build:
+      context: .
+      dockerfile: crawler.local.dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../:/usr/src/app/
+      - /usr/src/app/target/
+      - /usr/src/app/project/target/
+      - /usr/src/app/project/project/target/
+      - ~/.ivy2/:/root/.ivy2/

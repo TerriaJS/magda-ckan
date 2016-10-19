@@ -1,0 +1,7 @@
+version: '2'
+services:
+  crawler:
+    expose:
+     - "9002"
+    ports:
+      - "9002:9002"

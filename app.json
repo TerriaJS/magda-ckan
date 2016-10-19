@@ -1,0 +1,6 @@
+{
+  "name": "Magda CKAN Crawler",
+  "description": "Crawls a CKAN server and populates a Magda Registry with the datasets and resources.",
+  "website": "https://github.com/TerriaJS/magda-ckan",
+  "success_url": "/ping"
+}

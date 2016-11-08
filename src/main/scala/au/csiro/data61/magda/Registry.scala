@@ -7,6 +7,7 @@ import au.csiro.data61.magda.model.misc._
 import scala.concurrent.{ExecutionContext, Future}
 
 trait Registry {
+  def initialize(): Future[Any]
   def add(source: String, dataSets: List[DataSet]): Future[Any]
   def needsReindexing(): Future[Boolean]
 }

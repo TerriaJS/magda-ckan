@@ -15,16 +15,16 @@ import spray.json.DefaultJsonProtocol._
 
 import scala.concurrent.{ExecutionContext, Future, Promise}
 
-case class RecordSection(
-  id: String,
-  name: String,
-  data: Option[JsObject]
-)
-
 case class Record(
   id: String,
   name: String,
-  sections: List[RecordSection]
+  sections: Map[String, JsObject]
+)
+
+case class SectionDefinition(
+  id: String,
+  name: String,
+  jsonSchema: JsObject
 )
 
 case class SourceSection(
@@ -38,15 +38,55 @@ case class BadRequest(message: String) {
 class MagdaRegistry(implicit val system: ActorSystem, implicit val ec: ExecutionContext, implicit val materializer: Materializer) extends Registry with Protocols {
   private val http = Http()
 
-  private implicit val recordSectionFormat = jsonFormat3(RecordSection)
   private implicit val recordFormat = jsonFormat3(Record)
   private implicit val sourceSectionFormat = jsonFormat2(SourceSection)
   private implicit val badRequestFormat = jsonFormat1(BadRequest)
+  private implicit val sectionDefinitionFormat = jsonFormat3(SectionDefinition)
+
+  override def initialize(): Future[Any] = {
+    val sourceSection = SectionDefinition("source", "Source", JsObject())
+    val summarySection = SectionDefinition("dataset-summary", "Dataset Summary", JsObject())
+
+    for {
+      sourceSectionEntity <- Marshal(sourceSection).to[MessageEntity]
+      summarySectionEntity <- Marshal(summarySection).to[MessageEntity]
+      sourcePut <- http.singleRequest(HttpRequest(
+        // TODO: get  the base URL from configuration
+        // TODO: URI encode the ID
+        uri = "http://localhost:9001/api/0.1/sections/" + sourceSection.id,
+        method = HttpMethods.PUT,
+        entity = sourceSectionEntity
+      ))
+      summaryPut <- http.singleRequest(HttpRequest(
+        // TODO: get  the base URL from configuration
+        // TODO: URI encode the ID
+        uri = "http://localhost:9001/api/0.1/sections/" + summarySection.id,
+        method = HttpMethods.PUT,
+        entity = summarySectionEntity
+      ))
+      sourceResult <- sourcePut.status match {
+        case StatusCodes.OK => Unmarshal(sourcePut.entity).to[SectionDefinition]
+        case StatusCodes.BadRequest => Unmarshal(sourcePut.entity).to[BadRequest].map(badRequest => throw new RuntimeException(badRequest.message))
+        case aynythingElse => {
+          sourcePut.discardEntityBytes()
+          throw new RuntimeException("Section definition creation failed.")
+        }
+      }
+      summaryResult <- summaryPut.status match {
+        case StatusCodes.OK => Unmarshal(summaryPut.entity).to[SectionDefinition]
+        case StatusCodes.BadRequest => Unmarshal(summaryPut.entity).to[BadRequest].map(badRequest => throw new RuntimeException(badRequest.message))
+        case aynythingElse => {
+          sourcePut.discardEntityBytes()
+          throw new RuntimeException("Section definition creation failed.")
+        }
+      }
+    } yield (sourceResult, summaryResult)
+  }
 
   override def add(source: String, dataSets: List[DataSet]): Future[Any] = {
     val result = Source(dataSets).mapAsync(6)((dataset: DataSet) => {
       val source = SourceSection(
-        `type` = "CKAN", // TODO
+        `type` = "ckan-dataset", // TODO
         url = "https://data.gov.au/api/3/action/package_show?id=" + dataset.identifier
       )
 
@@ -54,17 +94,9 @@ class MagdaRegistry(implicit val system: ActorSystem, implicit val ec: Execution
         // TODO: prefix the identifier, e.g. "dga:" + dataset.identifier
         id = dataset.identifier,
         name = dataset.title.getOrElse(dataset.identifier),
-        sections = List(
-          RecordSection(
-            id = "source",
-            name = "Source",
-            data = Some(source.toJson.asJsObject())
-          ),
-          RecordSection(
-            id = "summary",
-            name = "Summary",
-            data = Some(dataset.toJson.asJsObject())
-          )
+        sections = Map(
+          "source" -> source.toJson.asJsObject(),
+          "dataset-summary" -> dataset.toJson.asJsObject()
         )
       )
 
@@ -88,79 +120,7 @@ class MagdaRegistry(implicit val system: ActorSystem, implicit val ec: Execution
       })
     })
 
-    result.runForeach(record => println("Added " + record.name))
-
-/*
-    var doRequest = (dataset: DataSet) => {
-      val source = Source(
-        `type` = "CKAN", // TODO
-        url = "https://data.gov.au/api/3/action/package_show?id=" + dataset.identifier
-      )
-
-      val record = Record(
-        // TODO: prefix the identifier, e.g. "dga:" + dataset.identifier
-        id = dataset.identifier,
-        name = dataset.title.getOrElse(dataset.identifier),
-        sections = List(
-          RecordSection(
-            id = "source",
-            name = "Source",
-            data = Some(source.toJson.asJsObject())
-          ),
-          RecordSection(
-            id = "summary",
-            name = "Summary",
-            data = Some(dataset.toJson.asJsObject())
-          )
-        )
-      )
-
-      Marshal(record).to[MessageEntity].flatMap(entity => {
-        http.singleRequest(HttpRequest(
-          // TODO: get the base URL from configuration
-          // TODO: URI encode the ID
-          uri = "http://localhost:9001/api/0.1/records/" + dataset.identifier,
-          method = HttpMethods.PUT,
-          entity = entity
-        ))
-      })
-    }
-
-    Future.sequence[HttpResponse, List](dataSets.take(25).map(dataset => {
-      val source = Source(
-        `type` = "CKAN", // TODO
-        url = "https://data.gov.au/api/3/action/package_show?id=" + dataset.identifier
-      )
-
-      val record = Record(
-        // TODO: prefix the identifier, e.g. "dga:" + dataset.identifier
-        id = dataset.identifier,
-        name = dataset.title.getOrElse(dataset.identifier),
-        sections = List(
-          RecordSection(
-            id = "source",
-            name = "Source",
-            data = Some(source.toJson.asJsObject())
-          ),
-          RecordSection(
-            id = "summary",
-            name = "Summary",
-            data = Some(dataset.toJson.asJsObject())
-          )
-        )
-      )
-
-      Marshal(record).to[MessageEntity].flatMap(entity => {
-        http.singleRequest(HttpRequest(
-          // TODO: get the base URL from configuration
-          // TODO: URI encode the ID
-          uri = "http://localhost:9001/api/0.1/records/" + dataset.identifier,
-          method = HttpMethods.PUT,
-          entity = entity
-        ))
-      })
-    }))
-    */
+    result.runForeach(record => println("Added/Updated " + record.name))
   }
 
   override def needsReindexing(): Future[Boolean] = {

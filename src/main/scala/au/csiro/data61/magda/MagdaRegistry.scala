@@ -44,43 +44,32 @@ class MagdaRegistry(implicit val system: ActorSystem, implicit val ec: Execution
   private implicit val sectionDefinitionFormat = jsonFormat3(SectionDefinition)
 
   override def initialize(): Future[Any] = {
-    val sourceSection = SectionDefinition("source", "Source", JsObject())
-    val summarySection = SectionDefinition("dataset-summary", "Dataset Summary", JsObject())
+    val sections = List(
+      SectionDefinition("source", "Source", JsObject()),
+      SectionDefinition("dataset-summary", "Dataset Summary", JsObject()),
+      SectionDefinition("distribution-summary", "Distribution Summary", JsObject())
+    )
 
-    for {
-      sourceSectionEntity <- Marshal(sourceSection).to[MessageEntity]
-      summarySectionEntity <- Marshal(summarySection).to[MessageEntity]
-      sourcePut <- http.singleRequest(HttpRequest(
-        // TODO: get  the base URL from configuration
-        // TODO: URI encode the ID
-        uri = "http://localhost:9001/api/0.1/sections/" + sourceSection.id,
-        method = HttpMethods.PUT,
-        entity = sourceSectionEntity
-      ))
-      summaryPut <- http.singleRequest(HttpRequest(
-        // TODO: get  the base URL from configuration
-        // TODO: URI encode the ID
-        uri = "http://localhost:9001/api/0.1/sections/" + summarySection.id,
-        method = HttpMethods.PUT,
-        entity = summarySectionEntity
-      ))
-      sourceResult <- sourcePut.status match {
-        case StatusCodes.OK => Unmarshal(sourcePut.entity).to[SectionDefinition]
-        case StatusCodes.BadRequest => Unmarshal(sourcePut.entity).to[BadRequest].map(badRequest => throw new RuntimeException(badRequest.message))
-        case aynythingElse => {
-          sourcePut.discardEntityBytes()
-          throw new RuntimeException("Section definition creation failed.")
+    Source(sections).mapAsync(6)(section => {
+      for {
+        entity <- Marshal(section).to[MessageEntity]
+        put <- http.singleRequest(HttpRequest(
+          // TODO: get  the base URL from configuration
+          // TODO: URI encode the ID
+          uri = "http://localhost:9001/api/0.1/sections/" + section.id,
+          method = HttpMethods.PUT,
+          entity = entity
+        ))
+        result <- put.status match {
+          case StatusCodes.OK => Unmarshal(put.entity).to[SectionDefinition]
+          case StatusCodes.BadRequest => Unmarshal(put.entity).to[BadRequest].map(badRequest => throw new RuntimeException(badRequest.message))
+          case anythingElse => {
+            put.discardEntityBytes()
+            throw new RuntimeException("Section definition creation failed.")
+          }
         }
-      }
-      summaryResult <- summaryPut.status match {
-        case StatusCodes.OK => Unmarshal(summaryPut.entity).to[SectionDefinition]
-        case StatusCodes.BadRequest => Unmarshal(summaryPut.entity).to[BadRequest].map(badRequest => throw new RuntimeException(badRequest.message))
-        case aynythingElse => {
-          sourcePut.discardEntityBytes()
-          throw new RuntimeException("Section definition creation failed.")
-        }
-      }
-    } yield (sourceResult, summaryResult)
+      } yield result
+    }).runForeach(sectionResult => println("Created section " + sectionResult.id))
   }
 
   override def add(source: String, dataSets: List[DataSet]): Future[Any] = {
